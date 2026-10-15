@@ -1,8 +1,28 @@
 # assignment3
-Interactive Melody Synthesizer（交互式旋律合成器） 
+Interactive Melody Synthesizer
 
-目标用户：任何想探索音乐旋律与声音波形变化的人。
-核心交互（Input）：用户点击音符按钮/调音滑块，或按键盘数字键切换旋律模式（如：升调、倒序、加入谐波叠加）。
-程序响应（Response）：声音引擎实时重新计算并播放调整后的旋律，界面绘制出对应的动态波形。 
-反馈（Feedback）：音符亮起、波形实时起伏、状态文本显示当前音高/模式。 
-容错处理（Error Handling）：解决浏览器自动播放限制（必须先点击页面才能发声），处理防抖（避免快速狂点击导致音频卡顿报错）。
+# Interactive Melody Synthesizer
+
+An interactive, web-based melody synthesizer built using HTML5 Canvas and native Web Audio synthesis for Assignment 3.
+
+## Idea & Intended User
+This project is designed for users interested in exploring pitch, sequence loops, and visual music feedback. Users can dynamically manipulate a playing sequence and observe instant auditory and visual feedback.
+
+## Main Interaction (Input, Response & Feedback)
+- **Input**:
+  - Click on the central dark canvas to toggle melody loop playback.
+  - Click control buttons (`Reverse Melody`, `Pitch Up`, `Reset`) to manipulate the sequence in real-time.
+- **Response**:
+  - Synthesizes dynamic pitch audio using audio nodes.
+  - Updates note sequence array order and pitch octaves instantly.
+- **Feedback**:
+  - **Visual**: Real-time canvas rendering highlighting active steps with animated note indicators.
+  - **Auditory**: Immediate pitch and melody structure feedback.
+  - **Text**: Dynamic status bar displaying playback status and mode toggles.
+
+## How to Run
+1. Ensure Python 3 is installed.
+2. Clone this repository locally.
+3. Open terminal in the directory and run:
+   ```bash
+   python3 -m http.server 8000

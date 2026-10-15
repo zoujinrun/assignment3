@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Melody Synthesizer</title>
+  <style>
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    h1 { margin-bottom: 5px; }
+    p { color: #aaaaaa; margin-bottom: 20px; }
+    .controls { margin-bottom: 20px; }
+    button {
+      background-color: #1ed760;
+      color: #000;
+      border: none;
+      padding: 10px 18px;
+      margin: 0 6px;
+      font-weight: bold;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: transform 0.1s, background-color 0.2s;
+    }
+    button:hover { background-color: #1fdf64; transform: scale(1.05); }
+    canvas {
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Interactive Melody Synthesizer</h1>
+  <p>点击下方黑色画布播放 / 暂停声音</p>
+
+  <div class="controls">
+    <button id="btn-reverse">Reverse Melody</button>
+    <button id="btn-pitch">Pitch Up (+1 Octave)</button>
+    <button id="btn-reset">Reset Melody</button>
+  </div>
+
+  <canvas id="synthCanvas" width="600" height="300"></canvas>
+
+  <script>
+    const canvas = document.getElementById('synthCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let isPlaying = false;
+    let timerId = null;
+
+    const baseNotes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25];
+    let currentNotes = [...baseNotes];
+    let currentStep = 0;
+    let isReversed = false;
+    let isPitchShifted = false;
+    let statusText = "点击黑色画布区域开启播放";
+
+    // 使用纯 JS 动态生成 WAV 数据音频（绕过 Web Audio 挂起限制）
+    function generateWavUrl(freq, duration = 0.2) {
+      const sampleRate = 8000;
+      const numSamples = Math.floor(sampleRate * duration);
+      const data = new Uint8Array(44 + numSamples);
+
+      // WAV Header
+      const writeString = (offset, str) => {
+        for (let i = 0; i < str.length; i++) data[offset + i] = str.charCodeAt(i);
+      };
+      const writeUint32 = (offset, val) => {
+        data[offset] = val & 0xff;
+        data[offset + 1] = (val >> 8) & 0xff;
+        data[offset + 2] = (val >> 16) & 0xff;
+        data[offset + 3] = (val >> 24) & 0xff;
+      };
+      const writeUint16 = (offset, val) => {
+        data[offset] = val & 0xff;
+        data[offset + 1] = (val >> 8) & 0xff;
+      };
+
+      writeString(0, 'RIFF');
+      writeUint32(4, 36 + numSamples);
+      writeString(8, 'WAVEfmt ');
+      writeUint32(16, 16);
+      writeUint16(20, 1); // PCM
+      writeUint16(22, 1); // Mono
+      writeUint32(24, sampleRate);
+      writeUint32(28, sampleRate);
+      writeUint16(32, 1);
+      writeUint16(34, 8); // 8-bit
+      writeString(36, 'data');
+      writeUint32(40, numSamples);
+
+      for (let i = 0; i < numSamples; i++) {
+        const t = i / sampleRate;
+        const val = Math.sin(2 * Math.PI * freq * t);
+        const sample = Math.floor((val + 1) * 127.5);
+        data[44 + i] = sample;
+      }
+
+      let binary = '';
+      for (let i = 0; i < data.length; i++) {
+        binary += String.fromCharCode(data[i]);
+      }
+      return 'data:audio/wav;base64,' + btoa(binary);
+    }
+
+    // 播放指定频率的音符
+    function playSound(freq) {
+      const audio = new Audio(generateWavUrl(freq));
+      audio.play().catch(e => {
+        console.log("Audio play prevented:", e);
+      });
+    }
+
+    // 绘制界面
+    function draw() {
+      ctx.fillStyle = '#181818';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '14px sans-serif';
+      ctx.fillText(`状态: ${statusText}`, 20, 30);
+      ctx.fillText(`反向: ${isReversed ? 'ON' : 'OFF'} | 升高八度: ${isPitchShifted ? 'ON' : 'OFF'}`, 20, 55);
+
+      const stepWidth = canvas.width / currentNotes.length;
+      for (let i = 0; i < currentNotes.length; i++) {
+        const x = i * stepWidth + stepWidth / 2;
+        const y = canvas.height - (currentNotes[i] / 1100) * (canvas.height - 120) - 50;
+
+        ctx.beginPath();
+        if (isPlaying && i === currentStep) {
+          ctx.arc(x, y, 14, 0, Math.PI * 2);
+          ctx.fillStyle = '#ff5555';
+        } else {
+          ctx.arc(x, y, 8, 0, Math.PI * 2);
+          ctx.fillStyle = '#5588ff';
+        }
+        ctx.fill();
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    // 点击画布播放
+    canvas.addEventListener('click', () => {
+      isPlaying = !isPlaying;
+
+      if (isPlaying) {
+        statusText = "正在播放旋律...";
+        playSound(currentNotes[currentStep]);
+        if (timerId) clearInterval(timerId);
+        timerId = setInterval(() => {
+          currentStep = (currentStep + 1) % currentNotes.length;
+          playSound(currentNotes[currentStep]);
+        }, 350);
+      } else {
+        statusText = "已暂停播放。点击画布继续。";
+        if (timerId) {
+          clearInterval(timerId);
+          timerId = null;
+        }
+      }
+    });
+
+    document.getElementById('btn-reverse').addEventListener('click', () => {
+      isReversed = !isReversed;
+      currentNotes.reverse();
+      statusText = isReversed ? "旋律已反向！" : "旋律恢复正序";
+    });
+
+    document.getElementById('btn-pitch').addEventListener('click', () => {
+      isPitchShifted = !isPitchShifted;
+      const factor = isPitchShifted ? 2 : 1;
+      currentNotes = baseNotes.map(f => f * factor);
+      if (isReversed) currentNotes.reverse();
+      statusText = isPitchShifted ? "音调已升高 1 个八度" : "音调已恢复默认";
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      isReversed = false;
+      isPitchShifted = false;
+      currentNotes = [...baseNotes];
+      statusText = "旋律已重置";
+    });
+
+    draw();
+  </script>
+</body>
+</html>
