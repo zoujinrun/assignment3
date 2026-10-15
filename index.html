@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dual-Track Interactive Melody Synthesizer</title>
+  <title>Triple-Track Visual Synthesizer</title>
   <style>
     body {
       background-color: #121212;
@@ -17,27 +17,27 @@
       margin: 0;
     }
     h1 { margin-bottom: 5px; }
-    p { color: #aaaaaa; margin-bottom: 20px; }
+    p { color: #aaaaaa; margin-bottom: 20px; text-align: center; max-width: 550px;}
     .controls {
       display: flex;
       flex-wrap: wrap;
       justify-content: center;
-      gap: 10px;
+      gap: 8px;
       margin-bottom: 20px;
-      max-width: 600px;
+      max-width: 650px;
     }
     button {
       background-color: #1ed760;
       color: #000;
       border: none;
-      padding: 10px 16px;
+      padding: 8px 14px;
       font-weight: bold;
       border-radius: 20px;
       cursor: pointer;
       transition: transform 0.1s, background-color 0.2s;
     }
     button:hover { background-color: #1fdf64; transform: scale(1.05); }
-    button.active { background-color: #ff5555; color: #fff; }
+    button.off { background-color: #444444; color: #888888; }
     canvas {
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(0,0,0,0.5);
@@ -47,157 +47,222 @@
 </head>
 <body>
 
-  <h1>Dual-Track Interactive Synthesizer</h1>
-  <p>点击下方黑色画布开启/暂停双音轨合奏</p>
+  <h1>Triple-Track Visual Synthesizer</h1>
+  <p>点击黑色画布开启声音。支持自由切换 Track 1、2、3 音轨与视听协统。</p>
 
   <div class="controls">
-    <button id="btn-track2">Toggle Bass Track (音轨 2: ON)</button>
-    <button id="btn-reverse">Reverse Melody</button>
+    <button id="btn-t1">Track 1 Lead: ON</button>
+    <button id="btn-t2">Track 2 Bass: ON</button>
+    <button id="btn-t3">Track 3 Arp: ON</button>
+    <button id="btn-reverse">Reverse</button>
     <button id="btn-pitch">Pitch Up (+1 Octave)</button>
     <button id="btn-reset">Reset All</button>
   </div>
 
-  <canvas id="synthCanvas" width="600" height="320"></canvas>
+  <canvas id="synthCanvas" width="620" height="360"></canvas>
 
   <script>
     const canvas = document.getElementById('synthCanvas');
     const ctx = canvas.getContext('2d');
 
-    let audioCtx = null;
     let isPlaying = false;
     let timerId = null;
 
-    // 音轨 1 (主旋律 Lead: C4 - C5)
+    // 音轨 1: 主旋律 Lead (Sine 正弦波)
     const baseLeadNotes = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88, 523.25];
-    // 音轨 2 (低音伴奏 Bass: C3 - C4，低一个八度)
+    // 音轨 2: 低音伴奏 Bass (Triangle 三角波/方波)
     const baseBassNotes = [130.81, 146.83, 164.81, 174.61, 196.00, 220.00, 246.94, 261.63];
+    // 音轨 3: 电子和声 Arp (Sawtooth 锯齿波)
+    const baseArpNotes  = [329.63, 369.99, 415.30, 440.00, 493.88, 554.37, 622.25, 659.25];
 
     let leadNotes = [...baseLeadNotes];
     let bassNotes = [...baseBassNotes];
+    let arpNotes  = [...baseArpNotes];
 
     let currentStep = 0;
-    let enableBassTrack = true; // 默认开启第二音轨
+    let enableT1 = true;
+    let enableT2 = true;
+    let enableT3 = true;
+
     let isReversed = false;
     let isPitchShifted = false;
     let statusText = "点击黑色画布区域开启播放";
+    let animationTime = 0;
 
-    // 初始化 AudioContext
-    function initAudio() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 动态生成包含多音轨波形混合的 WAV 音频 Data URI（不依赖 AudioContext，绝对兼容）
+    function generateTripleWavUrl(f1, f2, f3, duration = 0.25) {
+      const sampleRate = 8000;
+      const numSamples = Math.floor(sampleRate * duration);
+      const data = new Uint8Array(44 + numSamples);
+
+      const writeString = (offset, str) => {
+        for (let i = 0; i < str.length; i++) data[offset + i] = str.charCodeAt(i);
+      };
+      const writeUint32 = (offset, val) => {
+        data[offset] = val & 0xff;
+        data[offset + 1] = (val >> 8) & 0xff;
+        data[offset + 2] = (val >> 16) & 0xff;
+        data[offset + 3] = (val >> 24) & 0xff;
+      };
+      const writeUint16 = (offset, val) => {
+        data[offset] = val & 0xff;
+        data[offset + 1] = (val >> 8) & 0xff;
+      };
+
+      writeString(0, 'RIFF');
+      writeUint32(4, 36 + numSamples);
+      writeString(8, 'WAVEfmt ');
+      writeUint32(16, 16);
+      writeUint16(20, 1); // PCM
+      writeUint16(22, 1); // Mono
+      writeUint32(24, sampleRate);
+      writeUint32(28, sampleRate);
+      writeUint16(32, 1);
+      writeUint16(34, 8); // 8-bit
+      writeString(36, 'data');
+      writeUint32(40, numSamples);
+
+      for (let i = 0; i < numSamples; i++) {
+        const t = i / sampleRate;
+        let mixedVal = 0;
+        let activeCount = 0;
+
+        // 音轨 1: Sine 柔和正弦波
+        if (enableT1 && f1) {
+          mixedVal += Math.sin(2 * Math.PI * f1 * t) * 0.4;
+          activeCount++;
+        }
+
+        // 音轨 2: Triangle 低音三角波
+        if (enableT2 && f2) {
+          const tri = 2 * Math.abs(2 * (t * f2 - Math.floor(t * f2 + 0.5))) - 1;
+          mixedVal += tri * 0.5;
+          activeCount++;
+        }
+
+        // 音轨 3: Sawtooth 锯齿波
+        if (enableT3 && f3) {
+          const saw = 2 * (t * f3 - Math.floor(t * f3 + 0.5));
+          mixedVal += saw * 0.25;
+          activeCount++;
+        }
+
+        if (activeCount > 0) mixedVal /= Math.sqrt(activeCount); // 音量混音归一化，防止爆音
+
+        // 加上衰减包络线，避免边缘噪音
+        const env = Math.exp(-t * 6);
+        mixedVal *= env;
+
+        const sample = Math.floor(Math.max(-1, Math.min(1, mixedVal)) * 127.5 + 127.5);
+        data[44 + i] = sample;
       }
-      if (audioCtx.state === 'suspended') {
-        audioCtx.resume();
+
+      let binary = '';
+      for (let i = 0; i < data.length; i++) {
+        binary += String.fromCharCode(data[i]);
       }
+      return 'data:audio/wav;base64,' + btoa(binary);
     }
 
-    // 播放双音轨组合音符
-    function playDualNotes(leadFreq, bassFreq) {
-      if (!audioCtx) return;
+    // 播放音符
+    function playStepSound() {
+      const f1 = leadNotes[currentStep];
+      const f2 = bassNotes[currentStep];
+      const f3 = arpNotes[currentStep];
 
-      const now = audioCtx.currentTime;
-
-      // 1. 主旋律音轨 (Sine 波，较清晰)
-      const leadOsc = audioCtx.createOscillator();
-      const leadGain = audioCtx.createGain();
-      leadOsc.type = 'sine';
-      leadOsc.frequency.setValueAtTime(leadFreq, now);
-      leadGain.gain.setValueAtTime(0.25, now);
-      leadGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
-      leadOsc.connect(leadGain);
-      leadGain.connect(audioCtx.destination);
-      leadOsc.start(now);
-      leadOsc.stop(now + 0.3);
-
-      // 2. 副音轨/低音轨 (Triangle 三角波，带丰满的低音质感)
-      if (enableBassTrack && bassFreq) {
-        const bassOsc = audioCtx.createOscillator();
-        const bassGain = audioCtx.createGain();
-        bassOsc.type = 'triangle';
-        bassOsc.frequency.setValueAtTime(bassFreq, now);
-        bassGain.gain.setValueAtTime(0.35, now);
-        bassGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
-        bassOsc.connect(bassGain);
-        bassGain.connect(audioCtx.destination);
-        bassOsc.start(now);
-        bassOsc.stop(now + 0.38);
-      }
+      const wavUrl = generateTripleWavUrl(f1, f2, f3);
+      const audio = new Audio(wavUrl);
+      audio.play().catch(e => console.log("Audio play prevented:", e));
     }
 
-    // Canvas 画面绘制
+    // Canvas 渲染引擎
     function draw() {
+      animationTime += 1;
+
       ctx.fillStyle = '#181818';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // 状态与指示信息
       ctx.fillStyle = '#ffffff';
       ctx.font = '14px sans-serif';
-      ctx.fillText(`状态: ${statusText}`, 20, 30);
-      ctx.fillText(`Track 1 (Lead): ON  |  Track 2 (Bass): ${enableBassTrack ? 'ON' : 'OFF'}`, 20, 52);
+      ctx.fillText(`状态: ${statusText}`, 20, 28);
+      ctx.fillText(`Active Tracks: [T1 Lead: ${enableT1?'ON':'OFF'}] [T2 Bass: ${enableT2?'ON':'OFF'}] [T3 Arp: ${enableT3?'ON':'OFF'}]`, 20, 50);
 
       const stepWidth = canvas.width / leadNotes.length;
 
-      // 绘制两个音轨的节点图
       for (let i = 0; i < leadNotes.length; i++) {
         const x = i * stepWidth + stepWidth / 2;
+        const baseAmp = (isPlaying && i === currentStep) ? 14 : 5;
 
-        // 音轨 1 Y坐标 (上方)
-        const leadY = canvas.height - (leadNotes[i] / 1100) * 140 - 120;
-        // 音轨 2 Y坐标 (下方)
-        const bassY = canvas.height - (bassNotes[i] / 600) * 80 - 30;
+        // T1: 高音旋律 (快速颤动)
+        const fFactor1 = leadNotes[i] / 523.25;
+        const y1 = canvas.height - (leadNotes[i] / 1100) * 110 - 180 + Math.sin(animationTime * 0.2 * fFactor1) * baseAmp;
+        const x1 = x + Math.cos(animationTime * 0.2 * fFactor1) * (baseAmp / 3);
 
-        // 绘制连接两条音轨的垂直和声线
-        if (enableBassTrack) {
-          ctx.strokeStyle = (isPlaying && i === currentStep) ? 'rgba(255, 85, 85, 0.6)' : 'rgba(255, 255, 255, 0.15)';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(x, leadY);
-          ctx.lineTo(x, bassY);
-          ctx.stroke();
-        }
+        // T3: 电子和声 (左右晃动)
+        const fFactor3 = arpNotes[i] / 659.25;
+        const y3 = canvas.height - (arpNotes[i] / 1100) * 110 - 100 + Math.sin(animationTime * 0.12 * fFactor3) * baseAmp;
+        const x3 = x + Math.sin(animationTime * 0.15 * fFactor3) * (baseAmp / 2);
 
-        // 绘制音轨 1 (主旋律 - 蓝红点)
+        // T2: 低音轨 (慢速起伏)
+        const fFactor2 = bassNotes[i] / 261.63;
+        const y2 = canvas.height - (bassNotes[i] / 600) * 60 - 30 + Math.sin(animationTime * 0.05 * fFactor2) * baseAmp;
+
+        // 绘制垂直和声线
+        ctx.strokeStyle = (isPlaying && i === currentStep) ? 'rgba(255, 255, 255, 0.5)' : 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        if (isPlaying && i === currentStep) {
-          ctx.arc(x, leadY, 12, 0, Math.PI * 2);
-          ctx.fillStyle = '#ff5555';
-        } else {
-          ctx.arc(x, leadY, 7, 0, Math.PI * 2);
-          ctx.fillStyle = '#5588ff';
-        }
-        ctx.fill();
+        if (enableT1) ctx.lineTo(x1, y1);
+        if (enableT3) ctx.lineTo(x3, y3);
+        if (enableT2) ctx.lineTo(x, y2);
+        ctx.stroke();
 
-        // 绘制音轨 2 (低音轨 - 黄方块/方圈)
-        if (enableBassTrack) {
+        // 1. Track 1 (蓝色/红色 蓝圈)
+        if (enableT1) {
           ctx.beginPath();
-          if (isPlaying && i === currentStep) {
-            ctx.fillStyle = '#ffcc00';
-            ctx.fillRect(x - 9, bassY - 9, 18, 18);
-          } else {
-            ctx.fillStyle = '#88aa33';
-            ctx.fillRect(x - 6, bassY - 6, 12, 12);
-          }
+          ctx.arc(x1, y1, (isPlaying && i === currentStep) ? 11 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = (isPlaying && i === currentStep) ? '#ff5555' : '#5588ff';
+          ctx.fill();
+        }
+
+        // 2. Track 3 (紫色 菱形)
+        if (enableT3) {
+          ctx.beginPath();
+          const r = (isPlaying && i === currentStep) ? 9 : 5;
+          ctx.moveTo(x3, y3 - r);
+          ctx.lineTo(x3 + r, y3);
+          ctx.lineTo(x3, y3 + r);
+          ctx.lineTo(x3 - r, y3);
+          ctx.closePath();
+          ctx.fillStyle = (isPlaying && i === currentStep) ? '#ff00ff' : '#aa55ff';
+          ctx.fill();
+        }
+
+        // 3. Track 2 (黄绿/黄色 方块)
+        if (enableT2) {
+          ctx.beginPath();
+          const s = (isPlaying && i === currentStep) ? 16 : 10;
+          ctx.fillStyle = (isPlaying && i === currentStep) ? '#ffcc00' : '#88aa33';
+          ctx.fillRect(x - s/2, y2 - s/2, s, s);
         }
       }
 
       requestAnimationFrame(draw);
     }
 
-    // 点击画布播放 / 停止
+    // 点击画布控制播放/停止
     canvas.addEventListener('click', () => {
-      initAudio();
       isPlaying = !isPlaying;
 
       if (isPlaying) {
-        statusText = "双音轨合奏播放中...";
-        playDualNotes(leadNotes[currentStep], bassNotes[currentStep]);
+        statusText = "三音轨复调演奏中...";
+        playStepSound();
         if (timerId) clearInterval(timerId);
         timerId = setInterval(() => {
           currentStep = (currentStep + 1) % leadNotes.length;
-          playDualNotes(leadNotes[currentStep], bassNotes[currentStep]);
+          playStepSound();
         }, 340);
       } else {
-        statusText = "暂停播放。点击画布继续。";
+        statusText = "已暂停播放。点击画布继续。";
         if (timerId) {
           clearInterval(timerId);
           timerId = null;
@@ -205,13 +270,26 @@
       }
     });
 
-    // 独立控制音轨 2 的开关
-    const track2Btn = document.getElementById('btn-track2');
-    track2Btn.addEventListener('click', () => {
-      enableBassTrack = !enableBassTrack;
-      track2Btn.textContent = `Toggle Bass Track (音轨 2: ${enableBassTrack ? 'ON' : 'OFF'})`;
-      track2Btn.classList.toggle('active', !enableBassTrack);
-      statusText = enableBassTrack ? "已开启低音伴奏音轨" : "已关闭低音伴奏音轨";
+    // 控制音轨按钮
+    const btnT1 = document.getElementById('btn-t1');
+    btnT1.addEventListener('click', () => {
+      enableT1 = !enableT1;
+      btnT1.textContent = `Track 1 Lead: ${enableT1 ? 'ON' : 'OFF'}`;
+      btnT1.classList.toggle('off', !enableT1);
+    });
+
+    const btnT2 = document.getElementById('btn-t2');
+    btnT2.addEventListener('click', () => {
+      enableT2 = !enableT2;
+      btnT2.textContent = `Track 2 Bass: ${enableT2 ? 'ON' : 'OFF'}`;
+      btnT2.classList.toggle('off', !enableT2);
+    });
+
+    const btnT3 = document.getElementById('btn-t3');
+    btnT3.addEventListener('click', () => {
+      enableT3 = !enableT3;
+      btnT3.textContent = `Track 3 Arp: ${enableT3 ? 'ON' : 'OFF'}`;
+      btnT3.classList.toggle('off', !enableT3);
     });
 
     // 旋律反向
@@ -219,7 +297,8 @@
       isReversed = !isReversed;
       leadNotes.reverse();
       bassNotes.reverse();
-      statusText = isReversed ? "双音轨已反向播放" : "恢复正常顺序";
+      arpNotes.reverse();
+      statusText = isReversed ? "三音轨已反向" : "恢复正常顺序";
     });
 
     // 升八度
@@ -228,23 +307,30 @@
       const factor = isPitchShifted ? 2 : 1;
       leadNotes = baseLeadNotes.map(f => f * factor);
       bassNotes = baseBassNotes.map(f => f * factor);
+      arpNotes  = baseArpNotes.map(f => f * factor);
       if (isReversed) {
         leadNotes.reverse();
         bassNotes.reverse();
+        arpNotes.reverse();
       }
-      statusText = isPitchShifted ? "音调升高 1 八度" : "音调恢复默认";
+      statusText = isPitchShifted ? "升高 1 个八度" : "恢复默认音调";
     });
 
     // 重置
     document.getElementById('btn-reset').addEventListener('click', () => {
       isReversed = false;
       isPitchShifted = false;
-      enableBassTrack = true;
+      enableT1 = true;
+      enableT2 = true;
+      enableT3 = true;
       leadNotes = [...baseLeadNotes];
       bassNotes = [...baseBassNotes];
-      track2Btn.textContent = "Toggle Bass Track (音轨 2: ON)";
-      track2Btn.classList.remove('active');
-      statusText = "已重置所有音轨与设置";
+      arpNotes  = [...baseArpNotes];
+
+      btnT1.textContent = "Track 1 Lead: ON"; btnT1.classList.remove('off');
+      btnT2.textContent = "Track 2 Bass: ON"; btnT2.classList.remove('off');
+      btnT3.textContent = "Track 3 Arp: ON";  btnT3.classList.remove('off');
+      statusText = "重置所有设置";
     });
 
     draw();
